@@ -4,7 +4,7 @@ use std::{collections::HashMap, error::Error, fs, path::Path};
 
 use {
     enigo::Key,
-    rlua::Lua,
+    rlua::{InitFlags, Lua, StdLib},
     tokio::sync::mpsc::{Receiver, Sender},
 };
 
@@ -24,7 +24,12 @@ pub struct Script {
 
 impl Script {
     pub fn new(config: &Config, enigo_tx: Sender<EnigoCommand>) -> Result<Self, Box<dyn Error>> {
-        let lua = Lua::new();
+        let lua = unsafe {
+            Lua::unsafe_new_with_flags(
+                StdLib::ALL_NO_DEBUG,
+                InitFlags::DEFAULT - InitFlags::REMOVE_LOADLIB,
+            )
+        };
 
         let mut scripts = vec![];
         let mut script_map = HashMap::new();
@@ -82,12 +87,13 @@ impl Script {
                     Action::Release => format!("{}.Release", table_name),
                 };
 
-                self.lua
-                    .context(|lua_ctx| -> Result<(), Box<dyn Error>> {
-                        lua_ctx.load(&format!("{}()", method)).exec()?;
-                        Ok(())
-                    })
-                    .unwrap();
+                match self.lua.context(|lua_ctx| -> Result<(), Box<dyn Error>> {
+                    lua_ctx.load(&format!("{}()", method)).exec()?;
+                    Ok(())
+                }) {
+                    Ok(()) => {}
+                    Err(err) => eprintln!("Error running script:\n{}", err),
+                }
             }
         }
     }
