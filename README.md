@@ -2,6 +2,17 @@
 A simple mapping from key press to lua script. Map a key index to a lua script
 to automate different tedious tasks.
 
+# Installation
+This can be built and installed using `cargo build --release` and
+locating the binary in a proper `bin` folder. Proper packaging for this is
+likely a worthwhile investment in the future, but not currently available. The
+program ships expecting Lua to be linked locally. This is because the packaged
+version of Lua with `rlua` at the time of writing does not properly link the
+necessary C symbols for C Lua libraries to work properly. If you do not need C
+Libraries then feel free to use the `rlua` packaged Lua for convenience. I've
+chosen not to package it by default this way because I leverage `lua-http` for
+many of my scripts which requires `LUA_CPATH` libraries and the Lua C symbols.
+
 # Configuration
 Configuration location follows this logic: file name of either `config.toml` or
 `scriptkeys.toml` in either the directory `scriptkeys` was started, `~/.config`
