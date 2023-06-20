@@ -4,7 +4,7 @@ use std::{collections::HashMap, error::Error, fs, path::Path};
 
 use {
     enigo::Key,
-    rlua::{InitFlags, Lua, StdLib},
+    mlua::Lua,
     tokio::sync::mpsc::{Receiver, Sender},
 };
 
@@ -24,12 +24,7 @@ pub struct Script {
 
 impl Script {
     pub fn new(config: &Config, enigo_tx: Sender<EnigoCommand>) -> Result<Self, Box<dyn Error>> {
-        let lua = unsafe {
-            Lua::unsafe_new_with_flags(
-                StdLib::ALL_NO_DEBUG,
-                InitFlags::DEFAULT - InitFlags::REMOVE_LOADLIB,
-            )
-        };
+        let lua = unsafe { Lua::unsafe_new() };
 
         let mut scripts = vec![];
         let mut script_map = HashMap::new();
@@ -60,19 +55,16 @@ impl Script {
             let name = Path::new(&mapping.script).file_stem().unwrap();
             script_map.insert(mapping.key, String::from(name.to_str().unwrap()));
         }
+        {
+            let globals = lua.globals();
 
-        lua.context(|lua_ctx| -> Result<(), Box<dyn Error>> {
-            let globals = lua_ctx.globals();
-
-            define_keys(enigo_tx.clone(), &lua_ctx, &globals)?;
-            define_raw_keys(enigo_tx, &lua_ctx, &globals)?;
+            define_keys(enigo_tx.clone(), &lua, &globals)?;
+            define_raw_keys(enigo_tx, &lua, &globals)?;
 
             for script in scripts {
-                lua_ctx.load(&script).exec()?;
+                lua.load(&script).exec()?;
             }
-
-            Ok(())
-        })?;
+        }
 
         Ok(Self { lua, script_map })
     }
@@ -87,25 +79,19 @@ impl Script {
                     Action::Release => format!("{}.Release", table_name),
                 };
 
-                match self.lua.context(|lua_ctx| -> Result<(), Box<dyn Error>> {
-                    lua_ctx.load(&format!("{}()", method)).exec()?;
-                    Ok(())
-                }) {
-                    Ok(()) => {}
-                    Err(err) => eprintln!("Error running script:\n{}", err),
-                }
+                self.lua.load(&format!("{}()", method)).exec().unwrap();
             }
         }
     }
 }
 
-fn define_keys<'a>(
+fn define_keys(
     enigo_tx: Sender<EnigoCommand>,
-    lua_ctx: &rlua::Context<'a>,
-    globals: &rlua::Table<'a>,
+    lua: &Lua,
+    globals: &mlua::Table,
 ) -> Result<(), Box<dyn Error>> {
     let enigo_copy = enigo_tx.clone();
-    let key_click = lua_ctx.create_function(move |_lua_ctx, val: String| {
+    let key_click = lua.create_function(move |_lua, val: String| {
         let enigo_copy = enigo_copy.clone();
         tokio::spawn(async move {
             enigo_copy
@@ -117,7 +103,7 @@ fn define_keys<'a>(
     globals.set("keyClick", key_click)?;
 
     let enigo_copy = enigo_tx.clone();
-    let key_press = lua_ctx.create_function(move |_lua_ctx, val: String| {
+    let key_press = lua.create_function(move |_lua, val: String| {
         let enigo_copy = enigo_copy.clone();
         tokio::spawn(async move {
             enigo_copy
@@ -128,7 +114,7 @@ fn define_keys<'a>(
     })?;
     globals.set("keyDown", key_press)?;
 
-    let key_release = lua_ctx.create_function(move |_lua_ctx, val: String| {
+    let key_release = lua.create_function(move |_lua, val: String| {
         let enigo_tx = enigo_tx.clone();
         tokio::spawn(async move {
             enigo_tx
@@ -142,13 +128,13 @@ fn define_keys<'a>(
     Ok(())
 }
 
-fn define_raw_keys<'a>(
+fn define_raw_keys(
     enigo_tx: Sender<EnigoCommand>,
-    lua_ctx: &rlua::Context<'a>,
-    globals: &rlua::Table<'a>,
+    lua: &Lua,
+    globals: &mlua::Table,
 ) -> Result<(), Box<dyn Error>> {
     let enigo_copy = enigo_tx.clone();
-    let key_click = lua_ctx.create_function(move |_lua_ctx, val: u16| {
+    let key_click = lua.create_function(move |_lua, val: u16| {
         let enigo_copy = enigo_copy.clone();
         tokio::spawn(async move { enigo_copy.send(EnigoCommand::KeyClick(Key::Raw(val))).await });
         Ok(())
@@ -156,14 +142,14 @@ fn define_raw_keys<'a>(
     globals.set("rawKeyClick", key_click)?;
 
     let enigo_copy = enigo_tx.clone();
-    let key_press = lua_ctx.create_function(move |_lua_ctx, val: u16| {
+    let key_press = lua.create_function(move |_lua, val: u16| {
         let enigo_copy = enigo_copy.clone();
         tokio::spawn(async move { enigo_copy.send(EnigoCommand::KeyDown(Key::Raw(val))).await });
         Ok(())
     })?;
     globals.set("rawKeyDown", key_press)?;
 
-    let key_release = lua_ctx.create_function(move |_lua_ctx, val: u16| {
+    let key_release = lua.create_function(move |_lua, val: u16| {
         let enigo_tx = enigo_tx.clone();
         tokio::spawn(async move { enigo_tx.send(EnigoCommand::KeyUp(Key::Raw(val))).await });
         Ok(())
