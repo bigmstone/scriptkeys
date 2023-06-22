@@ -28,7 +28,6 @@
 use std::{collections::HashMap, error::Error};
 
 use {
-    async_trait::async_trait,
     hidapi::{HidApi, HidDevice},
     serde::Deserialize,
     tokio::sync::mpsc::Sender,
@@ -118,7 +117,6 @@ impl XK68JS {
     }
 }
 
-#[async_trait]
 impl Device for XK68JS {
     fn get_device(&self) -> Result<HidDevice, Box<dyn Error>> {
         let api = HidApi::new()?;

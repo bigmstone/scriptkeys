@@ -15,7 +15,6 @@ hidapi = "2.3"
 toml = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
 enigo = "0.1"
 mlua = { version = "0.8", features = ["lua54", "vendored", "send"] }
 directories = "5.0"
