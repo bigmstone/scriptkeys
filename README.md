@@ -1,22 +1,20 @@
 # ScriptKeys
-A simple mapping from key press to lua script. Map a key index to a lua script
+A simple mapping from key press to Lua script. Map a key index to a Lua script
 to automate different tedious tasks.
 
 # Installation
-This can be built and installed using `cargo build --release` and
-locating the binary in a proper `bin` folder. Proper packaging for this is
-likely a worthwhile investment in the future, but not currently available. The
-program ships expecting Lua to be linked locally. This is because the packaged
-version of Lua with `rlua` at the time of writing does not properly link the
-necessary C symbols for C Lua libraries to work properly. If you do not need C
-Libraries then feel free to use the `rlua` packaged Lua for convenience. I've
-chosen not to package it by default this way because I leverage `lua-http` for
-many of my scripts which requires `LUA_CPATH` libraries and the Lua C symbols.
+1. `cargo install scriptkeys` will pull from Crates.io for easy installation
+2. Alternatively this can be built locally how you would expect
+    1. `cargo build --release`
+    2. Locate the binary `./target/release/scriptkeys` to relevant `PATH` directory
+
+Brew and other system level packaging is likely a worthwhile investment for the
+future.
 
 # Configuration
 Configuration location follows this logic: file name of either `config.toml` or
-`scriptkeys.toml` in either the directory `scriptkeys` was started, `~/.config`
-folder, or `~/.scriptkeys` folder.
+`scriptkeys.toml` in either the working directory, the `~/.config` directory, or
+`~/.scriptkeys` directory.
 
 Example Configuration:
 ```
@@ -34,8 +32,8 @@ script = 'Script2.lua'
 ```
 
 # Writing Scripts
-Scripts are stored in either the `./.scripts` directory from where `scriptkeys`
-was started or in `~/.scriptkeys/scripts/` directory.
+Scripts are stored in either the `./.scripts` directory (where ./ is the working
+directory of the binary) or in `~/.scriptkeys/scripts/` directory.
 
 The lua scripts are straight forward and should follow this structure:
 ```
@@ -50,17 +48,47 @@ function Test.Release()
 end
 ```
 
-Ensure that the script's file name is the same as the lua table. In this case
-the table is named `Test` so the script would need to be named `Test.lua`. This
-can be named whatever you like.
+Ensure that the script's file name is the same as the Lua table. In this case
+the Lua Table is named `Test` so the Lua file would need to be named `Test.lua`.
+The Lua Table and Lua file can be named whatever you like but they must match.
 
 ## Available helper functions
+Inside the Lua context there are helper functions for emulating keyboard keys,
+if desired. Below is a list of these.
+
 * `keyClick("<char>")`
 * `keyPress("<char>")`
 * `keyRelease("<char>")`
 * `rawKeyClick(<u16>)`
 * `rawKeyPress(<u16>)`
 * `rawKeyRelease(<u16>)`
+
+Example:
+```
+Test = Test or {}
+
+function Test.Press()
+    keyClick("H")
+    keyClick("e")
+    keyClick("l")
+    keyClick("l")
+    keyClick("o")
+    keyClick("Space")
+    keyClick("W")
+    keyClick("o")
+    keyClick("r")
+    keyClick("l")
+    keyClick("d")
+    keyClick("!")
+end
+
+function Test.Release()
+end
+```
+
+A full list of the mappings can be found in the
+[map_str_to_key](https://github.com/bigmstone/scriptkeys/blob/ad19856674b4695c50d3a1eaa586b7ab776318a6/src/script/helper.rs#LL3C8-L3C8)
+helper function
 
 # Supported Devices
 * XKeys 68 JS
