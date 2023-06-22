@@ -2,8 +2,13 @@
 name = "scriptkeys"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "ScriptKeys allows you to easily build macros (in Lua) on every key press for the supported devices."
+documentation = "https://github.com/bigmstone/scriptkeys/blob/main/README.md"
+homepage = "https://mattstone.io/projects/scriptkeys/"
+repository = "https://github.com/bigmstone/scriptkeys.git"
+license-file = "LICENSE"
+keywords = ["scripting", "keyboard", "macros"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 hidapi = "2.3"
