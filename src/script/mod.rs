@@ -1,15 +1,28 @@
 mod helper;
 
-use std::{collections::HashMap, error::Error, fs, path::Path};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use {
+    anyhow::{Error, Result},
     enigo::Key,
     mlua::Lua,
-    tokio::sync::mpsc::{Receiver, Sender},
+    notify::{
+        Error as NotifyError, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher,
+    },
+    tokio::sync::{
+        broadcast::Receiver as BroadcastReceiver,
+        mpsc::{channel, Receiver, Sender},
+        Mutex,
+    },
 };
 
 use crate::{
-    config::Config,
+    config::{Config, ConfigEvent, Mapping},
     constants::SCRIPT_FILE_PATHS,
     device::{Action, Event},
     errors::{LoadScriptError, ScriptNotFound},
@@ -20,76 +33,150 @@ use crate::{
 pub struct Script {
     lua: Lua,
     script_map: HashMap<u32, String>,
+    watcher: RecommendedWatcher,
 }
 
 impl Script {
-    pub fn new(config: &Config, enigo_tx: Sender<EnigoCommand>) -> Result<Self, Box<dyn Error>> {
+    pub async fn new(
+        config: Arc<Mutex<Config>>,
+        enigo_tx: Sender<EnigoCommand>,
+    ) -> Result<Arc<Mutex<Self>>> {
+        let (tx, rx) = channel::<Result<NotifyEvent, NotifyError>>(32);
+
+        let watcher = notify::recommended_watcher(
+            move |res: Result<NotifyEvent, NotifyError>| {
+                if tx.blocking_send(res).is_err() {}
+            },
+        )?;
+
         let lua = unsafe { Lua::unsafe_new() };
 
-        let mut scripts = vec![];
-        let mut script_map = HashMap::new();
-
-        for mapping in &config.mappings {
-            let mut script = None;
-
-            for path_str in SCRIPT_FILE_PATHS {
-                let path = parse_path(path_str);
-                let name = Path::new(&mapping.script);
-                let full_path = path.join(name);
-
-                if full_path.exists() {
-                    if let Ok(script_string) = fs::read_to_string(full_path) {
-                        script = Some(script_string);
-                    } else {
-                        return Err(Box::new(LoadScriptError));
-                    }
-                }
-            }
-
-            if let Some(script) = script {
-                scripts.push(script);
-            } else {
-                return Err(Box::new(ScriptNotFound));
-            }
-
-            let name = Path::new(&mapping.script).file_stem().unwrap();
-            script_map.insert(mapping.key, String::from(name.to_str().unwrap()));
-        }
+        let script = Arc::new(Mutex::new(Self {
+            lua,
+            script_map: HashMap::new(),
+            watcher,
+        }));
         {
-            let globals = lua.globals();
+            let mut script = script.lock().await;
+            {
+                let globals = script.lua.globals();
 
-            define_keys(enigo_tx.clone(), &lua, &globals)?;
-            define_raw_keys(enigo_tx, &lua, &globals)?;
-
-            for script in scripts {
-                lua.load(&script).exec()?;
+                define_keys(enigo_tx.clone(), &script.lua, &globals)?;
+                define_raw_keys(enigo_tx, &script.lua, &globals)?;
             }
+
+            script.load_mapping(&*config.lock().await)?;
         }
 
-        Ok(Self { lua, script_map })
+        tokio::spawn(script_watcher(script.clone(), rx));
+
+        Ok(script)
     }
 
-    pub async fn script_loop(self, mut rx: Receiver<Event>) {
-        loop {
-            let event = rx.recv().await.unwrap();
-
-            if let Some(table_name) = self.script_map.get(&event.key) {
-                let method = match event.action {
-                    Action::Press => format!("{}.Press", table_name),
-                    Action::Release => format!("{}.Release", table_name),
+    pub fn load_mapping(&mut self, conf: &Config) -> Result<()> {
+        for mapping in &conf.mappings {
+            if let Some(full_path) = find_script(&mapping.script) {
+                match self.load_script_mapping(&full_path, mapping) {
+                    Ok(()) => break,
+                    Err(err) => {
+                        if err.downcast_ref::<ScriptNotFound>().is_some() {
+                            continue;
+                        } else {
+                            return Err(err);
+                        }
+                    }
                 };
+            } else {
+                return Err(Error::new(ScriptNotFound));
+            }
+        }
 
-                self.lua.load(&format!("{}()", method)).exec().unwrap();
+        Ok(())
+    }
+
+    pub fn load_script_mapping(&mut self, path: &Path, mapping: &Mapping) -> Result<()> {
+        if path.exists() {
+            if let Ok(script) = fs::read_to_string(path) {
+                self.lua.load(&script).exec()?;
+                let name = Path::new(&mapping.script).file_stem().unwrap();
+                self.script_map
+                    .insert(mapping.key, String::from(name.to_str().unwrap()));
+                self.watcher.watch(path, RecursiveMode::NonRecursive)?;
+                Ok(())
+            } else {
+                Err(Error::new(LoadScriptError))
+            }
+        } else {
+            Err(Error::new(ScriptNotFound))
+        }
+    }
+
+    pub fn load_script(&mut self, path: &Path) -> Result<()> {
+        if path.exists() {
+            if let Ok(script) = fs::read_to_string(path) {
+                self.lua.load(&script).exec()?;
+
+                Ok(())
+            } else {
+                Err(Error::new(LoadScriptError))
+            }
+        } else {
+            Err(Error::new(ScriptNotFound))
+        }
+    }
+}
+
+pub async fn script_loop(script: Arc<Mutex<Script>>, mut rx: Receiver<Event>) {
+    loop {
+        let event = rx.recv().await.unwrap();
+
+        let script = script.lock().await;
+        if let Some(table_name) = script.script_map.get(&event.key) {
+            let method = match event.action {
+                Action::Press => format!("{}.Press", table_name),
+                Action::Release => format!("{}.Release", table_name),
+            };
+
+            script.lua.load(&format!("{}()", method)).exec().unwrap();
+        }
+    }
+}
+
+pub async fn config_update_handler(
+    script: Arc<Mutex<Script>>,
+    config: Arc<Mutex<Config>>,
+    mut rx: BroadcastReceiver<ConfigEvent>,
+) {
+    loop {
+        let event = rx.recv().await;
+
+        if let Ok(event) = event {
+            if event == ConfigEvent::Mapping {
+                let mut script = script.lock().await;
+                let conf = config.lock().await;
+
+                if script.load_mapping(&conf).is_err() {
+                    // TODO: Better Error Handling
+                }
             }
         }
     }
 }
 
-fn define_keys(
-    enigo_tx: Sender<EnigoCommand>,
-    lua: &Lua,
-    globals: &mlua::Table,
-) -> Result<(), Box<dyn Error>> {
+fn find_script(script: &str) -> Option<PathBuf> {
+    for path_str in SCRIPT_FILE_PATHS {
+        let path = parse_path(path_str);
+        let name = Path::new(script);
+        let full_path = path.join(name);
+        if full_path.exists() {
+            return Some(full_path);
+        }
+    }
+
+    None
+}
+
+fn define_keys(enigo_tx: Sender<EnigoCommand>, lua: &Lua, globals: &mlua::Table) -> Result<()> {
     let enigo_copy = enigo_tx.clone();
     let key_click = lua.create_function(move |_lua, val: String| {
         let enigo_copy = enigo_copy.clone();
@@ -128,11 +215,7 @@ fn define_keys(
     Ok(())
 }
 
-fn define_raw_keys(
-    enigo_tx: Sender<EnigoCommand>,
-    lua: &Lua,
-    globals: &mlua::Table,
-) -> Result<(), Box<dyn Error>> {
+fn define_raw_keys(enigo_tx: Sender<EnigoCommand>, lua: &Lua, globals: &mlua::Table) -> Result<()> {
     let enigo_copy = enigo_tx.clone();
     let key_click = lua.create_function(move |_lua, val: u16| {
         let enigo_copy = enigo_copy.clone();
@@ -157,4 +240,29 @@ fn define_raw_keys(
     globals.set("rawKeyUp", key_release)?;
 
     Ok(())
+}
+
+async fn script_watcher(
+    script: Arc<Mutex<Script>>,
+    mut rx: Receiver<Result<NotifyEvent, NotifyError>>,
+) {
+    loop {
+        if let Some(Ok(event)) = rx.recv().await {
+            if event.kind
+                == notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                    notify::event::DataChange::Content,
+                ))
+            {
+                let mut script = script.lock().await;
+
+                if let Some(path) = event.paths.first() {
+                    if script.load_script(path).is_err() {
+                        // TODO: Better Error Handling
+                    }
+                }
+            } else {
+                // TODO: Better Error Handling
+            }
+        }
+    }
 }

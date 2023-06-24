@@ -25,9 +25,10 @@
 // 00000000 Unused
 // ...x41 Unused Bytes
 
-use std::{collections::HashMap, error::Error};
+use std::collections::HashMap;
 
 use {
+    anyhow::{Error, Result},
     hidapi::{HidApi, HidDevice},
     serde::Deserialize,
     tokio::sync::mpsc::Sender,
@@ -115,10 +116,8 @@ impl XK68JS {
     fn bit_set(byte: u8, bit: i8) -> bool {
         (byte & (1 << bit)) != 0
     }
-}
 
-impl Device for XK68JS {
-    fn get_device(&self) -> Result<HidDevice, Box<dyn Error>> {
+    fn get_device(&self) -> Result<HidDevice, Error> {
         let api = HidApi::new()?;
         let mut xkeys_device = None;
 
@@ -134,13 +133,15 @@ impl Device for XK68JS {
 
         let device = match xkeys_device {
             Some(device) => device,
-            None => return Err(Box::new(DeviceNotFound)),
+            None => return Err(Error::new(DeviceNotFound)),
         };
 
         Ok(device)
     }
+}
 
-    fn read_loop(mut self, tx: Sender<Event>) {
+impl Device for XK68JS {
+    fn read_loop(&mut self, tx: Sender<Event>) {
         let device = self.get_device().unwrap();
 
         loop {

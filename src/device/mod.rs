@@ -1,10 +1,10 @@
 pub mod xkeys;
 
-use std::error::Error;
+use std::{thread, time::Duration};
 
-use {hidapi::HidDevice, serde::Deserialize, tokio::sync::mpsc::Sender};
+use {anyhow::Result, serde::Deserialize, tokio::sync::mpsc::Sender};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, PartialEq)]
 pub enum Action {
     Press,
     Release,
@@ -16,12 +16,42 @@ pub struct Event {
     pub action: Action,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 pub enum Devices {
     XK68JS,
+    Dummy,
+}
+
+pub fn derive_device(device: &Devices) -> Result<Box<dyn Device + Send>> {
+    match device {
+        Devices::XK68JS => Ok(Box::<xkeys::xk68js::XK68JS>::default()),
+        Devices::Dummy => Ok(Box::new(Dummy {
+            duration: Duration::from_secs(10),
+        })),
+    }
 }
 
 pub trait Device {
-    fn get_device(&self) -> Result<HidDevice, Box<dyn Error>>;
-    fn read_loop(self, tx: Sender<Event>);
+    fn read_loop(&mut self, tx: Sender<Event>);
+}
+
+pub struct Dummy {
+    pub duration: Duration,
+}
+
+impl Device for Dummy {
+    fn read_loop(&mut self, tx: Sender<Event>) {
+        loop {
+            let txc = tx.clone();
+            tokio::spawn(async move {
+                let event = Event {
+                    key: 0,
+                    action: Action::Press,
+                };
+
+                txc.send(event).await.unwrap();
+            });
+            thread::sleep(self.duration);
+        }
+    }
 }

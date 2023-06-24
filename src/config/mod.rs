@@ -1,18 +1,37 @@
-use std::{error::Error, fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use serde::Deserialize;
+use {
+    anyhow::{Error, Result},
+    notify::{Error as NotifyError, Event, RecommendedWatcher, RecursiveMode, Watcher},
+    serde::Deserialize,
+    tokio::sync::{
+        broadcast::{channel as broadcast_channel, Sender},
+        mpsc::{channel, Receiver},
+        Mutex,
+    },
+};
 
 use crate::{
     constants::{CONFIG_FILE_NAMES, CONFIG_FILE_PATHS},
-    device::{Action, Devices},
+    device::Devices,
     errors::ConfigPathNotFound,
     helper::parse_path,
 };
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ConfigEvent {
+    Device,
+    Mapping,
+    Script,
+}
+
+#[derive(Deserialize, PartialEq)]
 pub struct Mapping {
     pub key: u32,
-    pub action: Action,
     pub script: String,
 }
 
@@ -23,28 +42,113 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        let file_names: Vec<PathBuf> = CONFIG_FILE_NAMES.iter().map(|s| parse_path(s)).collect();
-        let paths: Vec<PathBuf> = CONFIG_FILE_PATHS.iter().map(|s| parse_path(s)).collect();
+    pub fn new(path: &Path) -> Result<Arc<Mutex<Self>>> {
+        let config_text = fs::read_to_string(path)?;
+        let config = Arc::new(Mutex::new(toml::from_str(&config_text)?));
 
-        let mut full_path = None;
+        Ok(config)
+    }
 
-        for path in paths.iter() {
-            for file_name in file_names.iter() {
-                let full_path_option = path.join(file_name);
-                if full_path_option.exists() {
-                    full_path = Some(full_path_option);
+    pub async fn update(&mut self) -> Result<Vec<ConfigEvent>> {
+        let path = match find_config() {
+            Some(full_path) => full_path,
+            None => return Err(Error::new(ConfigPathNotFound)),
+        };
+
+        let mut config_events = vec![];
+
+        let config: Config = toml::from_str(&fs::read_to_string(path)?)?;
+
+        if config.device != self.device {
+            config_events.push(ConfigEvent::Device);
+        }
+
+        if !config.mappings.eq(&self.mappings) {
+            config_events.push(ConfigEvent::Mapping);
+        }
+
+        *self = config;
+
+        Ok(config_events)
+    }
+}
+
+pub struct ConfigWatcher {
+    pub config: Arc<Mutex<Config>>,
+    pub config_event: Sender<ConfigEvent>,
+    _watcher: RecommendedWatcher,
+}
+
+impl ConfigWatcher {
+    pub async fn new() -> Result<Self> {
+        let path = match find_config() {
+            Some(full_path) => full_path,
+            None => return Err(Error::new(ConfigPathNotFound)),
+        };
+
+        let config = Config::new(&path)?;
+
+        let (ce_tx, _ce_rx) = broadcast_channel::<ConfigEvent>(32);
+        let (tx, rx) = channel::<Result<Event, NotifyError>>(32);
+
+        let mut watcher = notify::recommended_watcher(
+            move |res: Result<Event, NotifyError>| {
+                if tx.blocking_send(res).is_err() {}
+            },
+        )?;
+
+        tokio::spawn(config_watcher(config.clone(), rx, ce_tx.clone()));
+
+        watcher.watch(&path, RecursiveMode::NonRecursive)?;
+
+        Ok(Self {
+            config,
+            config_event: ce_tx,
+            _watcher: watcher,
+        })
+    }
+}
+
+fn find_config() -> Option<PathBuf> {
+    let file_names: Vec<PathBuf> = CONFIG_FILE_NAMES.iter().map(|s| parse_path(s)).collect();
+    let paths: Vec<PathBuf> = CONFIG_FILE_PATHS.iter().map(|s| parse_path(s)).collect();
+
+    for path in paths.iter() {
+        for file_name in file_names.iter() {
+            let full_path_option = path.join(file_name);
+            if full_path_option.exists() {
+                return Some(full_path_option);
+            }
+        }
+    }
+
+    None
+}
+
+async fn config_watcher(
+    config: Arc<Mutex<Config>>,
+    mut rx: Receiver<Result<Event, NotifyError>>,
+    tx: Sender<ConfigEvent>,
+) {
+    loop {
+        if let Some(Ok(event)) = rx.recv().await {
+            if event.kind
+                == notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                    notify::event::DataChange::Content,
+                ))
+            {
+                let mut conf = config.lock().await;
+                if let Ok(events) = conf.update().await {
+                    for event in events {
+                        println!("Event: {:?}", event);
+                        if tx.send(event).is_err() {
+                            // TODO: Better Error Handling
+                        }
+                    }
+                } else {
+                    // TODO: Better Error Handling
                 }
             }
         }
-
-        let path = match full_path {
-            Some(full_path) => full_path,
-            None => return Err(Box::new(ConfigPathNotFound)),
-        };
-
-        let config_text = fs::read_to_string(path)?;
-
-        Ok(toml::from_str(&config_text)?)
     }
 }

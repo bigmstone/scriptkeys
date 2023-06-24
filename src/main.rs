@@ -1,37 +1,51 @@
 use std::error::Error;
 
 use {
+    anyhow::Result,
     enigo::{Enigo, KeyboardControllable},
     tokio::{sync::mpsc, task},
 };
 
 use scriptkeys::{
-    config::Config,
-    device::{xkeys::xk68js::XK68JS, Device, Devices, Event},
-    script::Script,
+    config::ConfigWatcher,
+    device::{derive_device, Event},
+    script::{config_update_handler, script_loop, Script},
     EnigoCommand,
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let config = Config::new()?;
-
-    let device = match config.device {
-        Devices::XK68JS => XK68JS::default(),
-    };
-
     let (tx, rx): (mpsc::Sender<Event>, mpsc::Receiver<Event>) = mpsc::channel(32);
     let (enigo_tx, mut enigo_rx): (mpsc::Sender<EnigoCommand>, mpsc::Receiver<EnigoCommand>) =
         mpsc::channel(32);
 
-    let script = Script::new(&config, enigo_tx)?;
+    let config_watcher = ConfigWatcher::new().await?;
 
-    task::spawn_blocking(move || {
-        device.read_loop(tx);
+    {
+        let conf = config_watcher.config.lock().await;
+        let mut device = derive_device(&conf.device)?;
+
+        task::spawn_blocking(move || {
+            device.read_loop(tx);
+        });
+    }
+
+    let script = Script::new(config_watcher.config.clone(), enigo_tx).await?;
+
+    let script_clone = script.clone();
+    task::spawn(async move {
+        script_loop(script_clone, rx).await;
     });
 
+    let script_clone = script.clone();
     task::spawn(async move {
-        script.script_loop(rx).await;
+        let config_event_reader = config_watcher.config_event.subscribe();
+        config_update_handler(
+            script_clone,
+            config_watcher.config.clone(),
+            config_event_reader,
+        )
+        .await;
     });
 
     let mut enigo = Enigo::new();
