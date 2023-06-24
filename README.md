@@ -22,12 +22,10 @@ device = 'XK68JS'
 
 [[mappings]]
 key = 0
-action = 'Press'
 script = 'Script1.lua'
 
 [[mappings]]
 key = 1
-action = 'Release'
 script = 'Script2.lua'
 ```
 
