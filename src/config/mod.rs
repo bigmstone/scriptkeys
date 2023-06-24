@@ -6,6 +6,7 @@ use std::{
 
 use {
     anyhow::{Error, Result},
+    log::{debug, error, info},
     notify::{Error as NotifyError, Event, RecommendedWatcher, RecursiveMode, Watcher},
     serde::Deserialize,
     tokio::sync::{
@@ -139,14 +140,18 @@ async fn config_watcher(
             {
                 let mut conf = config.lock().await;
                 if let Ok(events) = conf.update().await {
+                    info!("Updating Config file");
                     for event in events {
-                        println!("Event: {:?}", event);
+                        info!("Config update event: {:?}", event);
                         if tx.send(event).is_err() {
-                            // TODO: Better Error Handling
+                            error!("Cannot send Config update event to broadcast channel");
                         }
                     }
                 } else {
-                    // TODO: Better Error Handling
+                    debug!(
+                        "Config file notify fired but not an update notification: {:?}",
+                        event
+                    );
                 }
             }
         }
