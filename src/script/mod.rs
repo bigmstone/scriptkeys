@@ -10,6 +10,7 @@ use std::{
 use {
     anyhow::{Error, Result},
     enigo::Key,
+    log::{debug, error, info, trace},
     mlua::Lua,
     notify::{
         Error as NotifyError, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher,
@@ -155,8 +156,8 @@ pub async fn config_update_handler(
                 let mut script = script.lock().await;
                 let conf = config.lock().await;
 
-                if script.load_mapping(&conf).is_err() {
-                    // TODO: Better Error Handling
+                if let Err(e) = script.load_mapping(&conf) {
+                    error!("Couldn't load scripts from Config: {}", e);
                 }
             }
         }
@@ -179,35 +180,33 @@ fn find_script(script: &str) -> Option<PathBuf> {
 fn define_keys(enigo_tx: Sender<EnigoCommand>, lua: &Lua, globals: &mlua::Table) -> Result<()> {
     let enigo_copy = enigo_tx.clone();
     let key_click = lua.create_function(move |_lua, val: String| {
-        let enigo_copy = enigo_copy.clone();
-        tokio::spawn(async move {
-            enigo_copy
-                .send(EnigoCommand::KeyClick(helper::map_str_to_key(&val)))
-                .await
-        });
+        trace!("Key click fired from Lua: {}", val);
+        if let Err(e) =
+            enigo_copy.blocking_send(EnigoCommand::KeyClick(helper::map_str_to_key(&val)))
+        {
+            error!("Unable to send value into Enigo channel: {}", e);
+        }
         Ok(())
     })?;
     globals.set("keyClick", key_click)?;
 
     let enigo_copy = enigo_tx.clone();
     let key_press = lua.create_function(move |_lua, val: String| {
-        let enigo_copy = enigo_copy.clone();
-        tokio::spawn(async move {
-            enigo_copy
-                .send(EnigoCommand::KeyDown(helper::map_str_to_key(&val)))
-                .await
-        });
+        trace!("Key press fired from Lua: {}", val);
+        if let Err(e) =
+            enigo_copy.blocking_send(EnigoCommand::KeyDown(helper::map_str_to_key(&val)))
+        {
+            error!("Unable to send value into Enigo channel: {}", e);
+        }
         Ok(())
     })?;
     globals.set("keyDown", key_press)?;
 
     let key_release = lua.create_function(move |_lua, val: String| {
-        let enigo_tx = enigo_tx.clone();
-        tokio::spawn(async move {
-            enigo_tx
-                .send(EnigoCommand::KeyDown(helper::map_str_to_key(&val)))
-                .await
-        });
+        trace!("Key press release from Lua: {}", val);
+        if let Err(e) = enigo_tx.blocking_send(EnigoCommand::KeyUp(helper::map_str_to_key(&val))) {
+            error!("Unable to send value into Enigo channel: {}", e);
+        }
         Ok(())
     })?;
     globals.set("keyUp", key_release)?;
@@ -218,23 +217,29 @@ fn define_keys(enigo_tx: Sender<EnigoCommand>, lua: &Lua, globals: &mlua::Table)
 fn define_raw_keys(enigo_tx: Sender<EnigoCommand>, lua: &Lua, globals: &mlua::Table) -> Result<()> {
     let enigo_copy = enigo_tx.clone();
     let key_click = lua.create_function(move |_lua, val: u16| {
-        let enigo_copy = enigo_copy.clone();
-        tokio::spawn(async move { enigo_copy.send(EnigoCommand::KeyClick(Key::Raw(val))).await });
+        trace!("Raw key click fired from Lua: {}", val);
+        if let Err(e) = enigo_copy.blocking_send(EnigoCommand::KeyClick(Key::Raw(val))) {
+            error!("Unable to send value into Enigo channel: {}", e);
+        }
         Ok(())
     })?;
     globals.set("rawKeyClick", key_click)?;
 
     let enigo_copy = enigo_tx.clone();
     let key_press = lua.create_function(move |_lua, val: u16| {
-        let enigo_copy = enigo_copy.clone();
-        tokio::spawn(async move { enigo_copy.send(EnigoCommand::KeyDown(Key::Raw(val))).await });
+        trace!("Raw key press fired from Lua: {}", val);
+        if let Err(e) = enigo_copy.blocking_send(EnigoCommand::KeyDown(Key::Raw(val))) {
+            error!("Unable to send value into Enigo channel: {}", e);
+        }
         Ok(())
     })?;
     globals.set("rawKeyDown", key_press)?;
 
     let key_release = lua.create_function(move |_lua, val: u16| {
-        let enigo_tx = enigo_tx.clone();
-        tokio::spawn(async move { enigo_tx.send(EnigoCommand::KeyUp(Key::Raw(val))).await });
+        trace!("Raw key release fired from Lua: {}", val);
+        if let Err(e) = enigo_tx.blocking_send(EnigoCommand::KeyUp(Key::Raw(val))) {
+            error!("Unable to send value into Enigo channel: {}", e);
+        }
         Ok(())
     })?;
     globals.set("rawKeyUp", key_release)?;
@@ -256,12 +261,13 @@ async fn script_watcher(
                 let mut script = script.lock().await;
 
                 if let Some(path) = event.paths.first() {
-                    if script.load_script(path).is_err() {
-                        // TODO: Better Error Handling
+                    info!("Updating script: {}", path.display());
+                    if let Err(e) = script.load_script(path) {
+                        error!("Unable to load script: {} -- {}", path.display(), e);
                     }
                 }
             } else {
-                // TODO: Better Error Handling
+                debug!("Received non-file-update notify event: {:?}", event);
             }
         }
     }
