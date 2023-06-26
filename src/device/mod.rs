@@ -16,7 +16,7 @@ pub struct Event {
     pub action: Action,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Deserialize, PartialEq, Debug)]
 pub enum Devices {
     XK68JS,
     Dummy,
@@ -55,3 +55,4 @@ impl Device for Dummy {
         }
     }
 }
+

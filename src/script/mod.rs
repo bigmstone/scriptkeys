@@ -76,18 +76,21 @@ impl Script {
 
     pub fn load_mapping(&mut self, conf: &Config) -> Result<()> {
         for mapping in &conf.mappings {
+            trace!("Loading mapping: {:?}", mapping);
             if let Some(full_path) = find_script(&mapping.script) {
                 match self.load_script_mapping(&full_path, mapping) {
-                    Ok(()) => break,
+                    Ok(()) => continue,
                     Err(err) => {
                         if err.downcast_ref::<ScriptNotFound>().is_some() {
                             continue;
                         } else {
+                            error!("Error loading mapping: {:?}, {}", mapping, err);
                             return Err(err);
                         }
                     }
                 };
             } else {
+                error!("Script not found: {:?}", mapping);
                 return Err(Error::new(ScriptNotFound));
             }
         }
@@ -98,6 +101,7 @@ impl Script {
     pub fn load_script_mapping(&mut self, path: &Path, mapping: &Mapping) -> Result<()> {
         if path.exists() {
             if let Ok(script) = fs::read_to_string(path) {
+                trace!("Loading script: {}", path.display());
                 self.lua.load(&script).exec()?;
                 let name = Path::new(&mapping.script).file_stem().unwrap();
                 self.script_map
@@ -137,6 +141,8 @@ pub async fn script_loop(script: Arc<Mutex<Script>>, mut rx: Receiver<Event>) {
                 Action::Press => format!("{}.Press", table_name),
                 Action::Release => format!("{}.Release", table_name),
             };
+
+            trace!("Executing script: {}", method);
 
             script.lua.load(&format!("{}()", method)).exec().unwrap();
         }
@@ -272,3 +278,4 @@ async fn script_watcher(
         }
     }
 }
+

@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use {
     anyhow::{Error, Result},
     hidapi::{HidApi, HidDevice},
+    log::trace,
     serde::Deserialize,
     tokio::sync::mpsc::Sender,
 };
@@ -153,6 +154,7 @@ impl Device for XK68JS {
             let txc = tx.clone();
             tokio::spawn(async move {
                 for event in events {
+                    trace!("Sending event: {:?}", event);
                     txc.send(event).await.unwrap();
                 }
             });
@@ -189,3 +191,4 @@ mod test {
         }
     }
 }
+
