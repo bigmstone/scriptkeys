@@ -30,13 +30,13 @@ pub enum ConfigEvent {
     Script,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Deserialize, PartialEq, Debug)]
 pub struct Mapping {
     pub key: u32,
     pub script: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Config {
     pub device: Devices,
     pub mappings: Vec<Mapping>,
@@ -157,3 +157,4 @@ async fn config_watcher(
         }
     }
 }
+
