@@ -64,6 +64,23 @@ impl Script {
 
                 define_keys(enigo_tx.clone(), &script.lua, &globals)?;
                 define_raw_keys(enigo_tx, &script.lua, &globals)?;
+
+                #[cfg(target_os = "macos")]
+                {
+                    let hid_post_aux_key =
+                        script
+                            .lua
+                            .create_function(move |_lua, (key, down): (u32, bool)| {
+                                if let Err(err) = helper::hid_post_aux_key(key, down) {
+                                    error!(
+                                        "Failed executing post HID aux key (key: {}, down: {}): {}",
+                                        key, down, err
+                                    );
+                                }
+                                Ok(())
+                            })?;
+                    globals.set("hid_post_aux_key", hid_post_aux_key)?;
+                }
             }
 
             script.load_mapping(&*config.lock().await)?;
@@ -144,7 +161,9 @@ pub async fn script_loop(script: Arc<Mutex<Script>>, mut rx: Receiver<Event>) {
 
             trace!("Executing script: {}", method);
 
-            script.lua.load(&format!("{}()", method)).exec().unwrap();
+            if let Err(err) = script.lua.load(&format!("{}()", method)).exec() {
+                error!("Failed to execute script ({}): {}", method, err);
+            }
         }
     }
 }

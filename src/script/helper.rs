@@ -1,3 +1,14 @@
+#[cfg(target_os = "macos")]
+use std::{error::Error, ffi::c_void};
+
+#[cfg(target_os = "macos")]
+use {
+    log::trace,
+    objc2::msg_send,
+    objc2_app_kit::{NSEvent, NSEventModifierFlags, NSSystemDefined},
+    objc2_foundation::NSPoint,
+};
+
 use enigo::Key;
 
 pub fn map_str_to_key(s: &str) -> Key {
@@ -87,4 +98,34 @@ pub fn map_str_to_key(s: &str) -> Key {
         "UpArrow" => Key::UpArrow,
         _ => Key::Layout(s.as_bytes()[0] as char),
     }
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn CGEventPost(tap: u32, event: *mut c_void);
+}
+
+#[cfg(target_os = "macos")]
+pub fn hid_post_aux_key(key: u32, down: bool) -> Result<(), Box<dyn Error>> {
+    unsafe {
+        let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+            NSSystemDefined,
+            NSPoint { x: 0., y: 0. },
+            NSEventModifierFlags::empty(),
+            0.0,
+            0,
+            None,
+            8,
+            ((key << 16) | ((if down { 0xa } else { 0xb }) << 8)) as isize,
+            -1
+            ).unwrap();
+
+        let cgevent: *mut c_void = msg_send![&event, CGEvent];
+
+        trace!("Sending CGEvent: {:?}", event);
+        CGEventPost(0, cgevent);
+    }
+
+    Ok(())
 }
