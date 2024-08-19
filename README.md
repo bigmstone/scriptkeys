@@ -1,22 +1,26 @@
 # ScriptKeys
+
 A simple mapping from key press to Lua script. Map a key index to a Lua script
 to automate different tedious tasks.
 
 # Installation
+
 1. `cargo install scriptkeys` will pull from Crates.io for easy installation
 2. Alternatively this can be built locally how you would expect
-    1. `cargo build --release`
-    2. Locate the binary `./target/release/scriptkeys` to relevant `PATH` directory
+   1. `cargo build --release`
+   2. Locate the binary `./target/release/scriptkeys` to relevant `PATH` directory
 
 Brew and other system level packaging is likely a worthwhile investment for the
 future.
 
 # Configuration
+
 Configuration location follows this logic: file name of either `config.toml` or
 `scriptkeys.toml` in either the working directory, the `~/.config` directory, or
 `~/.scriptkeys` directory.
 
 Example Configuration:
+
 ```
 device = 'XK68JS'
 
@@ -30,10 +34,12 @@ script = 'Script2.lua'
 ```
 
 # Writing Scripts
+
 Scripts are stored in either the `./.scripts` directory (where ./ is the working
 directory of the binary) or in `~/.scriptkeys/scripts/` directory.
 
 The lua scripts are straight forward and should follow this structure:
+
 ```
 Test = Test or {}
 
@@ -51,17 +57,22 @@ the Lua Table is named `Test` so the Lua file would need to be named `Test.lua`.
 The Lua Table and Lua file can be named whatever you like but they must match.
 
 ## Available helper functions
+
 Inside the Lua context there are helper functions for emulating keyboard keys,
 if desired. Below is a list of these.
 
-* `keyClick("<char>")`
-* `keyPress("<char>")`
-* `keyRelease("<char>")`
-* `rawKeyClick(<u16>)`
-* `rawKeyPress(<u16>)`
-* `rawKeyRelease(<u16>)`
+- `keyClick("<char>")`
+- `keyPress("<char>")`
+- `keyRelease("<char>")`
+- `rawKeyClick(<u16>)`
+- `rawKeyPress(<u16>)`
+- `rawKeyRelease(<u16>)`
+- `hid_post_aux_key(<u32>, <bool>)`
+  - Note: This function is MacOS only
+  - The first variable is the key type and the second is if the key is down or up
 
 Example:
+
 ```
 Test = Test or {}
 
@@ -89,4 +100,5 @@ A full list of the mappings can be found in the
 helper function
 
 # Supported Devices
-* XKeys 68 JS
+
+- XKeys 68 JS
