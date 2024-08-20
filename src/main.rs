@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use {
@@ -10,15 +11,18 @@ use {
     log::LevelFilter,
     log4rs::{
         append::{console::ConsoleAppender, file::FileAppender},
-        config::{Appender, Config, Logger, Root},
+        config::{Appender, Config as LogConfig, Logger, Root},
         encode::pattern::PatternEncoder,
         Handle,
     },
-    tokio::{sync::mpsc, task},
+    tokio::{
+        sync::{mpsc, Mutex},
+        task,
+    },
 };
 
 use scriptkeys::{
-    config::ConfigWatcher,
+    config::{Config, ConfigWatcher},
     constants::{LOG_FILE_NAMES, LOG_FILE_PATHS},
     device::{derive_device, Event},
     script::{config_update_handler, script_loop, Script},
@@ -27,13 +31,7 @@ use scriptkeys::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let _handle = setup_logging();
-
-    info!("Starting scriptkeys");
-
     let (tx, rx): (mpsc::Sender<Event>, mpsc::Receiver<Event>) = mpsc::channel(32);
-    let (enigo_tx, mut enigo_rx): (mpsc::Sender<EnigoCommand>, mpsc::Receiver<EnigoCommand>) =
-        mpsc::channel(32);
 
     let config_watcher = ConfigWatcher::new().await?;
 
@@ -45,6 +43,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             device.read_loop(tx);
         });
     }
+
+    let _handle = setup_logging(config_watcher.config.clone()).await;
+
+    info!("Starting scriptkeys");
+
+    let (enigo_tx, mut enigo_rx): (mpsc::Sender<EnigoCommand>, mpsc::Receiver<EnigoCommand>) =
+        mpsc::channel(32);
 
     let script = Script::new(config_watcher.config.clone(), enigo_tx).await?;
 
@@ -76,10 +81,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn setup_logging() -> Result<Handle> {
+async fn setup_logging(config: Arc<Mutex<Config>>) -> Result<Handle> {
     let stdout = ConsoleAppender::builder().build();
     let mut config_builder =
-        Config::builder().appender(Appender::builder().build("stdout", Box::new(stdout)));
+        LogConfig::builder().appender(Appender::builder().build("stdout", Box::new(stdout)));
     let mut root_builder = Root::builder().appender("stdout");
 
     if let Some(log_path) = find_log_location() {
@@ -93,8 +98,10 @@ fn setup_logging() -> Result<Handle> {
         eprintln!("Couldn't find location for logging to file. STDOUT will only be supported.");
     }
 
+    let config = config.lock().await;
+
     let config = config_builder
-        .logger(Logger::builder().build("scriptkeys", LevelFilter::Info))
+        .logger(Logger::builder().build("scriptkeys", config.log_level))
         .build(root_builder.build(LevelFilter::Warn))?;
 
     Ok(log4rs::init_config(config)?)

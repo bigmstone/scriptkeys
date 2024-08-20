@@ -6,6 +6,7 @@ use std::{
 
 use {
     anyhow::{Error, Result},
+    log::LevelFilter,
     log::{debug, error, info},
     notify::{Error as NotifyError, Event, RecommendedWatcher, RecursiveMode, Watcher},
     serde::Deserialize,
@@ -38,8 +39,14 @@ pub struct Mapping {
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
+    #[serde(default = "default_log_level")]
+    pub log_level: LevelFilter,
     pub device: Devices,
     pub mappings: Vec<Mapping>,
+}
+
+fn default_log_level() -> LevelFilter {
+    LevelFilter::Info
 }
 
 impl Config {
@@ -157,4 +164,3 @@ async fn config_watcher(
         }
     }
 }
-
