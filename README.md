@@ -33,6 +33,10 @@ key = 1
 script = 'Script2.lua'
 ```
 
+You may also add `log_level` value in the top level of the config (alongside
+`device`) to set the log level. Default level is `Info` but you may set it to
+any of the standard [`log` package `LevelFilter`s](https://docs.rs/log/latest/log/enum.LevelFilter.html).
+
 # Writing Scripts
 
 Scripts are stored in either the `./.scripts` directory (where ./ is the working
