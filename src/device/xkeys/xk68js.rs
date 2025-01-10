@@ -25,12 +25,12 @@
 // 00000000 Unused
 // ...x41 Unused Bytes
 
-use std::collections::HashMap;
+use std::{collections::HashMap, thread::sleep, time::Duration};
 
 use {
     anyhow::{Error, Result},
     hidapi::{HidApi, HidDevice},
-    log::trace,
+    log::{error, info, trace},
     serde::Deserialize,
     tokio::sync::mpsc::Sender,
 };
@@ -39,6 +39,8 @@ use crate::{
     device::{Action, Device, Event},
     errors::DeviceNotFound,
 };
+
+const MAX_BACKOFF: u64 = 60;
 
 #[derive(Debug)]
 pub struct State {}
@@ -143,11 +145,36 @@ impl XK68JS {
 
 impl Device for XK68JS {
     fn read_loop(&mut self, tx: Sender<Event>) {
-        let device = self.get_device().unwrap();
+        let mut device = None;
+        let mut backoff = 1;
 
         loop {
             let mut buf: Vec<u8> = vec![0; 64];
-            device.read(&mut buf).unwrap();
+
+            let dev = match &device {
+                Some(device) => device,
+                None => {
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                    sleep(Duration::from_secs(backoff));
+                    device = match self.get_device() {
+                        Ok(dev) => {
+                            info!("Connection to device established");
+                            Some(dev)
+                        }
+                        Err(e) => {
+                            error!("Error obtaining device: {}", e);
+                            None
+                        }
+                    };
+                    continue;
+                }
+            };
+
+            if let Err(e) = dev.read(&mut buf) {
+                error!("Couldn't read from device: {}", e);
+                device = None;
+                continue;
+            }
 
             let events = self.process_buffer(&buf);
 
@@ -191,4 +218,3 @@ mod test {
         }
     }
 }
-
